@@ -235,15 +235,6 @@ def _convert_output_type_range(img: np.ndarray, dst_type: np.dtype) -> np.ndarra
 
 
 def rgb2pixelformat_pt(img: Tensor, pixel_format: PixelFormat) -> Tensor:
-    # Support both 4D and 5D (e.g. for temporal models) by flattening time dim into the batch dim, doing the conversion, then restoring the original shape
-    if img.dim() == 5:
-        b, t, c, h, w = img.shape
-        out = rgb2pixelformat_pt(img.reshape(b * t, c, h, w), pixel_format)
-        return out.reshape(b, t, out.shape[1], h, w)
-
-    if img.dim() != 4:
-        raise ValueError(f"Expected 4D or 5D tensor, got shape {tuple(img.shape)}")
-
     if pixel_format == "rgb":
         return img
     elif pixel_format == "yuv444":
@@ -290,14 +281,6 @@ def rgb2ycbcr_pt(img: Tensor, y_only: bool = False) -> Tensor:
     Returns:
         (Tensor): converted images with the shape (n, 3/1, h, w), the range [0, 1], float.
     """
-    if img.dim() == 5:
-        b, t, c, h, w = img.shape
-        out = rgb2ycbcr_pt(img.reshape(b * t, c, h, w), y_only=y_only)
-        return out.reshape(b, t, out.shape[1], h, w)
-
-    if img.dim() != 4:
-        raise ValueError(f"Expected 4D or 5D tensor, got shape {tuple(img.shape)}")
-
     if y_only:
         weight = torch.tensor([[65.481], [128.553], [24.966]]).to(img)
         out_img = (
