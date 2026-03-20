@@ -55,6 +55,37 @@ from traiNNer.utils.redux_options import ReduxOptions
 from traiNNer.utils.types import TrainingState
 
 
+def _to_crop_hw(size: int | tuple[int, int]) -> tuple[int, int]:
+    if isinstance(size, int):
+        return size, size
+    return size
+
+
+def _scale_crop_size(size: int | tuple[int, int], scale: int) -> int | tuple[int, int]:
+    if isinstance(size, int):
+        return size * scale
+    h, w = size
+    return h * scale, w * scale
+
+
+def _downscale_crop_size(
+    size: int | tuple[int, int], scale: int
+) -> int | tuple[int, int]:
+    if isinstance(size, int):
+        return size // scale
+    h, w = size
+    return h // scale, w // scale
+
+
+def _format_crop_size(size: int | tuple[int, int] | None) -> str:
+    if size is None:
+        return "None"
+    h, w = _to_crop_hw(size)
+    if h == w:
+        return f"{h:,}"
+    return f"{h:,} x {w:,}"
+
+
 def init_tb_loggers(opt: ReduxOptions) -> SummaryWriter | None:
     # initialize wandb logger before tensorboard logger to allow proper sync
     assert opt.logger is not None
@@ -95,9 +126,9 @@ def create_train_val_dataloader(
             assert dataset_opt.batch_size_per_gpu is not None
 
             if dataset_opt.gt_size is None and dataset_opt.lq_size is not None:
-                dataset_opt.gt_size = dataset_opt.lq_size * opt.scale
+                dataset_opt.gt_size = _scale_crop_size(dataset_opt.lq_size, opt.scale)
             elif dataset_opt.lq_size is None and dataset_opt.gt_size is not None:
-                dataset_opt.lq_size = dataset_opt.gt_size // opt.scale
+                dataset_opt.lq_size = _downscale_crop_size(dataset_opt.gt_size, opt.scale)
             else:
                 raise ValueError(
                     "Exactly one of gt_size or lq_size must be defined in the train dataset"
@@ -155,9 +186,9 @@ def create_train_val_dataloader(
                 "Accumulate iterations:",
                 f"{dataset_opt.accum_iter:,}",
                 "HR crop size:",
-                f"{dataset_opt.gt_size:,}",
+                _format_crop_size(dataset_opt.gt_size),
                 "LR crop size:",
-                f"{dataset_opt.lq_size:,}",
+                _format_crop_size(dataset_opt.lq_size),
                 "World size (gpu number):",
                 f"{opt.world_size:,}",
                 "Require iter per epoch:",
