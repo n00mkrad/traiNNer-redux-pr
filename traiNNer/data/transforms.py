@@ -107,7 +107,7 @@ def paired_random_crop(
         assert isinstance(img_lq, np.ndarray)
         h_lq, w_lq = img_lq.shape[0:2]
         h_gt, w_gt = img_gt.shape[0:2]
-    gt_patch_w, gt_patch_h = _to_patch_hw(gt_patch_size)
+    gt_patch_h, gt_patch_w = _to_patch_hw(gt_patch_size)
     lq_patch_h = gt_patch_h // scale
     lq_patch_w = gt_patch_w // scale
 
@@ -226,25 +226,14 @@ def single_crop_vips(
     y: int,
     path: str | None = None,
 ) -> np.ndarray:
-    print(f"[WH DEBUG] single_crop_vips - patch_size: {patch_size}")
-    # patch_w, patch_h = _to_patch_hw(patch_size)
     patch_h, patch_w = _to_patch_hw(patch_size)
-    print(f"[WH DEBUG] single_crop_vips - patch_w: {patch_w}, patch_h: {patch_h}")
     h: int = img.height  # pyright: ignore[reportAssignmentType]
     w: int = img.width  # pyright: ignore[reportAssignmentType]
 
-    # if h < patch_h or w < patch_w:
-    #     # print(f"Image {path} is smaller (w {w}, h {h}) than crop size (w {patch_w}, h {patch_h}).")
-    #     pad_bottom = max(0, patch_h - h)
-    #     pad_right = max(0, patch_w - w)
-    #     img = img.embed(0, 0, w + pad_right, h + pad_bottom, extend="black")
-    #     # print(f"Image {path} is smaller (w {w}, h {h}) than crop size (w {patch_w}, h {patch_h}). Padded by (bottom {pad_bottom} px, right {pad_right} px). New size: ({w + pad_right}, {h + pad_bottom})")
-    #     h += pad_bottom
-    #     w += pad_right
     if h < patch_h or w < patch_w:
         raise ValueError(
-            f"Image (w {w}, h {h}) is smaller than patch size "
-            f"(w {patch_w}, h {patch_h}). "
+            f"Image ({h}, {w}) is smaller than patch size "
+            f"({patch_h}, {patch_w}). "
             f"Please remove {path}."
         )
 

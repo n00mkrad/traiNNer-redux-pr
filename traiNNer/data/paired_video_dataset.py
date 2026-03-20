@@ -167,27 +167,15 @@ class PairedVideoDataset(BaseDataset):
                 assert self.gt_size is not None
 
                 if force_x is None:
-                    force_rot90 = False # random.random() < 0.5
-                    force_hflip = False # random.random() < 0.5
-                    force_vflip = False # random.random() < 0.5
+                    force_rot90 = random.random() < 0.5
+                    force_hflip = random.random() < 0.5
+                    force_vflip = random.random() < 0.5
                     h_lq: int = vips_img_lq.height  # pyright: ignore[reportAssignmentType]
                     w_lq: int = vips_img_lq.width  # pyright: ignore[reportAssignmentType]
-                    # print(f"lq_size[0]: {lq_size[0]}, lq_size[1]: {lq_size[1]}, h_lq: {h_lq}, w_lq: {w_lq}, force_rot90: {force_rot90}, force_hflip: {force_hflip}, force_vflip: {force_vflip}, gt_size: {self.gt_size}")
                     if force_rot90:
                         h_lq, w_lq = w_lq, h_lq  # swap dimensions if rotating
-                    # If h_lq - lq_size[1] or w_lq - lq_size[0] is <0, pad the image with black to make it match 
-                    if h_lq < lq_size[1] or w_lq < lq_size[0]:
-                        pad_bottom = max(0, lq_size[1] - h_lq)
-                        pad_right = max(0, lq_size[0] - w_lq)
-                        vips_img_lq = vips_img_lq.embed(0, 0, w_lq + pad_right, h_lq + pad_bottom, extend="black")
-                        # print(f"Image {lq_path} is smaller (w {w_lq}, h {h_lq}) than crop size {lq_size}. Padded by (bottom {pad_bottom} px, right {pad_right} px). New size: ({w_lq + pad_right}, {h_lq + pad_bottom})")
-                        h_lq += pad_bottom
-                        w_lq += pad_right
-                    try:
-                        force_y = random.randint(0, h_lq - lq_size[1])
-                        force_x = random.randint(0, w_lq - lq_size[0])
-                    except ValueError:
-                        raise Exception(f"Invalid crop size: Image is smaller than crop size. Image is ({w_lq}, {h_lq}), crop size is ({lq_size[0]}, {lq_size[1]}).")
+                    force_y = random.randint(0, h_lq - lq_size[0])
+                    force_x = random.randint(0, w_lq - lq_size[1])
 
                 if i == middle_idx:
                     vips_img_gt_aug, vips_img_lq = augment_vips_pair(
