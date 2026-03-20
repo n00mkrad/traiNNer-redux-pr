@@ -1365,6 +1365,10 @@ ALL_ARCHS: list[ArchInfo] = [
         "scales": [1, 2, 4],
         "pth_override": True,
         "video_override": True,
+        "extras": {
+            "use_grid_sample_train": "true  # faster warp path for training on modern PyTorch/CUDA",
+            "use_grid_sample_inference": "false  # enable to test export/runtime compatibility against the faster warp path",
+        },
     },
     {
         "names": ["SCUNet_aaf6aa"],
