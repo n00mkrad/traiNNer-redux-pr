@@ -83,7 +83,7 @@ def _format_crop_size(size: int | tuple[int, int] | None) -> str:
     h, w = _to_crop_hw(size)
     if h == w:
         return f"{h:,}"
-    return f"{h:,}x{w:,}"
+    return f"{h:,} x {w:,}"
 
 
 def init_tb_loggers(opt: ReduxOptions) -> SummaryWriter | None:
