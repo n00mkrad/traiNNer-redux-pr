@@ -60,21 +60,27 @@ class LightFlowNet(nn.Module):
         return flow
 
 
-def warp_frame(x: Tensor, flow: Tensor, use_grid_sample: bool = False) -> Tensor:
-    """Warp frame x according to optical flow.
-
-    Args:
-        x: Input frame (B, C, H, W)
-        flow: Optical flow (B, 2, H, W) in pixel units
-        use_grid_sample: Use PyTorch's optimized grid_sample path instead of the
-            gather-based ONNX/TensorRT-friendly path.
-
-    Returns:
-        Warped frame (B, C, H, W)
-    """
+def warp_frame(x: Tensor, flow: Tensor, training: bool = False) -> Tensor:
+    """Warp frame x according to optical flow."""
     B, C, H, W = x.shape
+    
+    # Fast path for training: Uses highly optimized native C++ cuDNN kernels
+    if training:
+        # Create meshgrid mapping to [-1, 1] for grid_sample
+        yy, xx = torch.meshgrid(
+            torch.arange(H, device=x.device, dtype=x.dtype),
+            torch.arange(W, device=x.device, dtype=x.dtype),
+            indexing='ij'
+        )
+        # Add flow and normalize coordinates to [-1, 1] range
+        grid_x = 2.0 * (xx + flow[:, 0]) / max(W - 1, 1) - 1.0
+        grid_y = 2.0 * (yy + flow[:, 1]) / max(H - 1, 1) - 1.0
+        
+        grid = torch.stack((grid_x, grid_y), dim=-1) # (B, H, W, 2)
+        return F.grid_sample(x, grid, mode='bilinear', padding_mode='border', align_corners=True)
 
-    # Create coordinate grids
+    # Slow path for ONNX / DirectML inference
+    # ... (Keep your exact existing gather-based bilinear code below) ...
     yy = (
         torch.arange(H, device=x.device, dtype=x.dtype)
         .view(1, 1, H, 1)
@@ -90,28 +96,9 @@ def warp_frame(x: Tensor, flow: Tensor, use_grid_sample: bool = False) -> Tensor
     new_x = xx + flow[:, 0:1]
     new_y = yy + flow[:, 1:2]
 
-    if use_grid_sample:
-        if W > 1:
-            grid_x = (2.0 * new_x / (W - 1)) - 1.0
-        else:
-            grid_x = torch.zeros_like(new_x)
-        if H > 1:
-            grid_y = (2.0 * new_y / (H - 1)) - 1.0
-        else:
-            grid_y = torch.zeros_like(new_y)
-
-        grid = torch.stack((grid_x.squeeze(1), grid_y.squeeze(1)), dim=-1)
-        return F.grid_sample(
-            x,
-            grid,
-            mode="bilinear",
-            padding_mode="border",
-            align_corners=True,
-        )
-
     # Create max bounds as tensors on the same device for ONNX compatibility
-    max_x = x.new_tensor(W - 1)
-    max_y = x.new_tensor(H - 1)
+    max_x = torch.tensor(W - 1, device=x.device, dtype=x.dtype)
+    max_y = torch.tensor(H - 1, device=x.device, dtype=x.dtype)
 
     # Clamp coordinates to valid range (border padding behavior)
     new_x = new_x.clamp(0, max_x)
@@ -157,6 +144,22 @@ def warp_frame(x: Tensor, flow: Tensor, use_grid_sample: bool = False) -> Tensor
 
     # Weighted sum
     return w00 * p00 + w01 * p01 + w10 * p10 + w11 * p11
+
+
+class FieldPrefill(nn.Module):
+    """Prefill missing field lines without altering valid scanlines."""
+
+    def __init__(self, num_in_ch: int, hidden: int = 32) -> None:
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(num_in_ch + 1, hidden, (5, 1), 1, (2, 0), bias=True),
+            nn.GELU(),
+            nn.Conv2d(hidden, num_in_ch, (3, 1), 1, (1, 0), bias=True),
+        )
+
+    def forward(self, x: Tensor, mask: Tensor) -> Tensor:
+        delta = self.net(torch.cat([x, mask], dim=1))
+        return x + (1.0 - mask) * delta
 
 
 # --- FDAT Components ---
@@ -389,8 +392,7 @@ class TFDAT(nn.Module):
         mid_dim: int = 64,
         upsampler_type: SampleMods3 = "pixelshuffle",
         flow_base_ch: int = 32,
-        use_grid_sample_train: bool = True,
-        use_grid_sample_inference: bool = False,
+        enable_field_prefill: bool = False,
     ) -> None:
         if group_block_pattern is None:
             group_block_pattern = ["spatial", "channel"]
@@ -401,8 +403,7 @@ class TFDAT(nn.Module):
         self.clip_size = clip_size
         self.upscale = scale
         self.num_in_ch = num_in_ch
-        self.use_grid_sample_train = use_grid_sample_train
-        self.use_grid_sample_inference = use_grid_sample_inference
+        self.enable_field_prefill = enable_field_prefill
 
         # Unshuffle setup for 1x and 2x scale
         self.unshuffle = 1
@@ -416,6 +417,11 @@ class TFDAT(nn.Module):
 
         # Lightweight optical flow network (operates on original resolution)
         self.flow_net = LightFlowNet(num_in_ch, flow_base_ch)
+
+        # Optional field prefill for sparse field-based inputs.
+        # Keep the module instantiated so checkpoints can be loaded with strict=False
+        # regardless of whether this path is enabled for a particular run.
+        self.field_prefill = FieldPrefill(num_in_ch, 32)
 
         # Shallow feature extraction stem for scale > 2 (where unshuffle=1)
         # This compensates for the reduced input channel count
@@ -485,6 +491,10 @@ class TFDAT(nn.Module):
             with torch.no_grad():
                 self.shallow_stem[-1].weight.mul_(0.1)
 
+        # Initialize field prefill to an exact no-op at startup
+        nn.init.zeros_(self.field_prefill.net[-1].weight)
+        nn.init.zeros_(self.field_prefill.net[-1].bias)
+
     def load_state_dict(
         self,
         state_dict: StateDict,
@@ -511,11 +521,6 @@ class TFDAT(nn.Module):
             if hasattr(m, "weight") and m.weight is not None:
                 nn.init.constant_(m.weight, 1.0)
 
-    def _use_grid_sample_warp(self) -> bool:
-        return (
-            self.use_grid_sample_train if self.training else self.use_grid_sample_inference
-        )
-
     def forward(self, x: Tensor) -> Tensor:
         """
         Args:
@@ -539,48 +544,62 @@ class TFDAT(nn.Module):
             x = x.view(B, T, C, H + pad_h, W + pad_w)
         H_pad, W_pad = H + pad_h, W + pad_w
 
+        if self.enable_field_prefill:
+            # Estimate which raster parity contains valid lines in each field
+            even_energy = x[..., 0::2, :].abs().mean(dim=(2, 3, 4), keepdim=True)
+            odd_energy = x[..., 1::2, :].abs().mean(dim=(2, 3, 4), keepdim=True)
+            even_valid = (even_energy >= odd_energy).to(x.dtype)
+
+            rows = torch.arange(H_pad, device=x.device).view(1, 1, 1, H_pad, 1)
+            even_rows = (rows.remainder(2) == 0).to(x.dtype)
+            mask = even_valid * even_rows + (1.0 - even_valid) * (1.0 - even_rows)
+            mask = mask.expand(B, T, 1, H_pad, W_pad)
+
+            # Prefill missing field lines for all frames before motion estimation
+            x_prefill = self.field_prefill(
+                x.view(B * T, C, H_pad, W_pad),
+                mask.view(B * T, 1, H_pad, W_pad),
+            )
+            x = x_prefill.view(B, T, C, H_pad, W_pad)
+
         # Extract center frame
         center = x[:, center_idx]  # (B, C, H_pad, W_pad)
 
-        # Align neighboring frames to center using a single batched flow/warp pass.
-        # This substantially improves GPU utilization without changing outputs.
-        num_neighbors = T - 1
-        if num_neighbors > 0:
-            neighbors = torch.cat((x[:, :center_idx], x[:, center_idx + 1 :]), dim=1)
-            neighbors_flat = neighbors.reshape(B * num_neighbors, C, H_pad, W_pad)
-            center_flat = (
-                center.unsqueeze(1)
-                .expand(-1, num_neighbors, -1, -1, -1)
-                .reshape(B * num_neighbors, C, H_pad, W_pad)
-            )
-            flow = self.flow_net(neighbors_flat, center_flat)
-            aligned = warp_frame(
-                neighbors_flat,
-                flow,
-                use_grid_sample=self._use_grid_sample_warp(),
-            )
-            aligned = aligned.view(B, num_neighbors, C, H_pad, W_pad)
-            aligned_sum = aligned[:, 0]
-            for idx in range(1, num_neighbors):
-                aligned_sum = aligned_sum + aligned[:, idx]
-            aligned_ref = aligned_sum / num_neighbors
-        else:
-            aligned_ref = torch.zeros_like(center)
+        # Gather neighbor frames (everything except the center)
+        neighbor_indices = [t for t in range(T) if t != center_idx]
+        neighbors = x[:, neighbor_indices]  # (B, T-1, C, H_pad, W_pad)
+        
+        # Flatten Batch and Temporal dimensions into a single pass
+        Tm1 = T - 1
+        neighbors_flat = neighbors.reshape(B * Tm1, C, H_pad, W_pad)
+        
+        # Expand center to match the number of neighbors, then flatten
+        center_expanded = center.unsqueeze(1).expand(B, Tm1, C, H_pad, W_pad).reshape(B * Tm1, C, H_pad, W_pad)
+
+        # Compute optical flow in ONE pass
+        flows_flat = self.flow_net(neighbors_flat, center_expanded)
+        
+        # Warp all frames in ONE pass
+        aligned_flat = warp_frame(neighbors_flat, flows_flat, self.training)
+        
+        # Reshape back to separate sequence and sum across the temporal dimension
+        aligned_sum = aligned_flat.view(B, Tm1, C, H_pad, W_pad).sum(dim=1)
 
         # Apply unshuffle for scale <= 2, or shallow stem for scale > 2
-        spatial_inputs = torch.cat((center, aligned_ref), dim=0)
         if self.unshuffle > 1:
-            spatial_inputs = F.pixel_unshuffle(spatial_inputs, self.unshuffle)
+            center = F.pixel_unshuffle(center, self.unshuffle)
+            aligned_sum = F.pixel_unshuffle(aligned_sum, self.unshuffle)
+            H_feat, W_feat = H_pad // self.unshuffle, W_pad // self.unshuffle
         else:
             # Apply shallow stem to enrich features before main extraction (scale > 2)
             if self.shallow_stem is not None:
-                spatial_inputs = self.shallow_stem(spatial_inputs) + spatial_inputs
-        center, aligned_ref = spatial_inputs.chunk(2, dim=0)
+                center = self.shallow_stem(center) + center
+                aligned_sum = self.shallow_stem(aligned_sum) + aligned_sum
+            H_feat, W_feat = H_pad, W_pad
 
-        # Extract features in one batched conv pass to reduce kernel launch overhead.
-        center_feat, aligned_feat = self.conv_first(
-            torch.cat((center, aligned_ref), dim=0)
-        ).chunk(2, dim=0)
+        # Extract features
+        center_feat = self.conv_first(center)
+        aligned_feat = self.conv_first(aligned_sum / max(T - 1, 1))
 
         # Temporal fusion
         fused = self.temporal_fuse(torch.cat([center_feat, aligned_feat], dim=1))
@@ -613,8 +632,7 @@ def tfdat(
     drop_path_rate: float = 0.1,
     upsampler_type: SampleMods3 = "transpose+conv",
     flow_base_ch: int = 32,
-    use_grid_sample_train: bool = True,
-    use_grid_sample_inference: bool = True,
+    enable_field_prefill: bool = False,
 ) -> TFDAT:
     return TFDAT(
         num_in_ch=num_in_ch,
@@ -631,6 +649,5 @@ def tfdat(
         drop_path_rate=drop_path_rate,
         upsampler_type=upsampler_type,
         flow_base_ch=flow_base_ch,
-        use_grid_sample_train=use_grid_sample_train,
-        use_grid_sample_inference=use_grid_sample_inference,
+        enable_field_prefill=enable_field_prefill,
     )
