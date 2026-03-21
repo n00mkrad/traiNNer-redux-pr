@@ -112,8 +112,9 @@ class MessageLogger:
         lrs = log_vars.pop("lrs")
 
         # Construct the base message with epoch, iteration, and learning rates
-        message = f"[epoch:{epoch:4,d}, iter:{current_iter:8,d}, lr:("
-        message += ", ".join([f"{v:.3e}" for v in lrs]) + ")] "
+        message = f"[iter:{current_iter:8,d}] "
+        # message = f"[epoch:{epoch:4,d}, iter:{current_iter:8,d}, lr:("
+        # message += ", ".join([f"{v:.3e}" for v in lrs]) + ")] "
 
         # performance, eta
         if "time" in log_vars.keys():
@@ -122,19 +123,20 @@ class MessageLogger:
 
             total_time = time.time() - self.start_time
             time_sec_avg = total_time / (current_iter - self.start_iter + 1)
-            eta_sec = time_sec_avg * (self.max_iters - current_iter - 1)
-            eta_str = str(datetime.timedelta(seconds=int(eta_sec)))
-
-            message += f"[performance: {iter_time:.3f} it/s] [eta: {eta_str}] "
+            # eta_sec = time_sec_avg * (self.max_iters - current_iter - 1)
+            # eta_str = str(datetime.timedelta(seconds=int(eta_sec)))
+            mins_per_thousand_iters = (1000 / iter_time) * (1 / 60)
+            message += f"[{iter_time:.2f} it/s = {mins_per_thousand_iters:.1f} min/kit] "
 
         # peak VRAM
         message += (
-            f"[peak VRAM: {torch.cuda.max_memory_allocated() / (1024**3):.2f} GB] "
+            f"[VRAM: {torch.cuda.max_memory_allocated() / (1024**3):.1f} GB] "
         )
 
         # Log any additional variables (typically losses)
         for k, v in log_vars.items():
-            message += f"{k}: {v:.4e} "
+            v_str = f"{v:.6f}" if v < 10 else f"{v:.4e}"
+            message += f" {k}: {v_str} ".replace("_g", "").replace(" l_", " ").strip() + " "
             if self.tb_logger is not None:
                 label = k
                 if label.startswith("l_"):
