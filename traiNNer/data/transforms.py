@@ -270,7 +270,7 @@ def single_crop_vips(
         np.ndarray(
             buffer=data,
             dtype=get_vips_dtype(img),
-            shape=[patch_size, patch_size, img.bands],  # pyright: ignore[reportAssignmentType,reportArgumentType]
+            shape=[patch_h, patch_w, img.bands],  # pyright: ignore[reportAssignmentType,reportArgumentType]
         )
     )
 
