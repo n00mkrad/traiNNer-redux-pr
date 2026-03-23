@@ -20,6 +20,8 @@ VIPS_FORMAT_TO_DTYPE: dict[str, np.dtype] = {
     "double": np.float64,
 }
 
+RANDOM_CROP_MODULO = 4
+
 
 def get_vips_dtype(img: pyvips.Image) -> np.dtype:
     if img.format not in VIPS_FORMAT_TO_DTYPE:
@@ -36,6 +38,10 @@ def _to_patch_wh(patch_size: int | tuple[int, int]) -> tuple[int, int]:
     if isinstance(patch_size, int):
         return patch_size, patch_size
     return patch_size
+
+
+def _get_random_crop_start(max_start: int) -> int:
+    return random.randint(0, max_start // RANDOM_CROP_MODULO) * RANDOM_CROP_MODULO
 
 
 def mod_crop(img: np.ndarray, scale: int) -> np.ndarray:
@@ -147,8 +153,8 @@ def paired_random_crop(
         )
 
     # randomly choose top and left coordinates for lq patch
-    top = random.randint(0, h_lq - lq_patch_h)
-    left = random.randint(0, w_lq - lq_patch_w)
+    top = _get_random_crop_start(h_lq - lq_patch_h)
+    left = _get_random_crop_start(w_lq - lq_patch_w)
 
     # crop lq patch
     if isinstance(img_lq, Tensor):
@@ -299,9 +305,9 @@ def paired_random_crop_vips(
         )
 
     if y is None:
-        y = random.randint(0, h_lq - lq_patch_h)
+        y = _get_random_crop_start(h_lq - lq_patch_h)
     if x is None:
-        x = random.randint(0, w_lq - lq_patch_w)
+        x = _get_random_crop_start(w_lq - lq_patch_w)
 
     img_lq_np = single_crop_vips(img_lq, (lq_patch_w, lq_patch_h), x, y, lq_path)
     img_gt_np = single_crop_vips(img_gt, (gt_patch_w, gt_patch_h), x * scale, y * scale, gt_path)

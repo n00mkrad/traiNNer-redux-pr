@@ -6,6 +6,7 @@ import torch
 
 from traiNNer.data.base_dataset import BaseDataset
 from traiNNer.data.transforms import (
+    _get_random_crop_start,
     augment_vips,
     augment_vips_pair,
     paired_random_crop_vips,
@@ -174,8 +175,8 @@ class PairedVideoDataset(BaseDataset):
                     w_lq: int = vips_img_lq.width  # pyright: ignore[reportAssignmentType]
                     if force_rot90:
                         h_lq, w_lq = w_lq, h_lq  # swap dimensions if rotating
-                    force_x = random.randint(0, w_lq - lq_size[0])
-                    force_y = random.randint(0, h_lq - lq_size[1])
+                    force_x = _get_random_crop_start(w_lq - lq_size[0])
+                    force_y = _get_random_crop_start(h_lq - lq_size[1])
 
                 if i == middle_idx:
                     vips_img_gt_aug, vips_img_lq = augment_vips_pair(
