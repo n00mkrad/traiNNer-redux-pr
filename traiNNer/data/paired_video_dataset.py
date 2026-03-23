@@ -69,48 +69,36 @@ class PairedVideoDataset(BaseDataset):
                 if f.lower().endswith((".png", ".jpg", ".jpeg"))
             }
 
-            scenes: dict[str, list[str]] = {}
-            for f in lr_files:
-                scene_prefix = f.split("_")[0]
-                if scene_prefix not in scenes:
-                    scenes[scene_prefix] = []
-                scenes[scene_prefix].append(f)
+            full_scene_key = lq_path
+            if full_scene_key not in self.frames:
+                self.frames[full_scene_key] = [
+                    (
+                        os.path.join(lq_path, f),
+                        os.path.join(gt_path, f) if f in hr_files else None,
+                    )
+                    for f in lr_files
+                ]
 
-            for scene_prefix, scene_files in scenes.items():
-                full_scene_key = f"{lq_path}_{scene_prefix}"
+            n_clips = len(lr_files) // self.clip_size
+            scene_clips = 0
 
-                if full_scene_key not in self.frames:
-                    self.frames[full_scene_key] = [
-                        (
-                            os.path.join(lq_path, f),
-                            os.path.join(gt_path, f) if f in hr_files else None,
-                        )
-                        for f in scene_files
-                    ]
+            for clip_idx in range(n_clips):
+                start_idx = clip_idx * self.clip_size
+                scene_files = lr_files[start_idx : start_idx + self.clip_size]
+                middle_filename = scene_files[self.clip_size // 2]
 
-                n_frames = len(scene_files)
-                n_clips = n_frames - self.clip_size + 1
-                scene_clips = 0
+                if middle_filename in hr_files:
+                    lr_paths = [os.path.join(lq_path, f) for f in scene_files]
+                    hr_path = os.path.join(gt_path, middle_filename)
+                    self.clips.append((lr_paths, hr_path))
 
-                for start_idx in range(max(n_clips, 0)):
-                    middle_idx = start_idx + self.clip_size // 2
-                    middle_filename = scene_files[middle_idx]
+                    self.index_mapping.append((full_scene_key, start_idx))
 
-                    if middle_filename in hr_files:
-                        lr_paths = [
-                            os.path.join(lq_path, scene_files[start_idx + j])
-                            for j in range(self.clip_size)
-                        ]
-                        hr_path = os.path.join(gt_path, middle_filename)
-                        self.clips.append((lr_paths, hr_path))
+                    scene_clips += 1
 
-                        self.index_mapping.append((full_scene_key, start_idx))
-
-                        scene_clips += 1
-
-                if scene_clips > 0:
-                    total_scenes += 1
-                    total_clips += scene_clips
+            if scene_clips > 0:
+                total_scenes += 1
+                total_clips += scene_clips
 
         logger.info(
             "Found %d valid file pairs across %d scenes.",
