@@ -1,3 +1,4 @@
+import shutil
 from os import path as osp
 
 import msgspec
@@ -33,20 +34,18 @@ phase: train
 
     dataset = PairedVideoDataset(opt)
     assert dataset.io_backend_opt["type"] == "disk"  # io backend
-    assert (
-        len(dataset) == len(image_names) - clip_size + 1
-    )  # whether to read correct meta info
+    assert len(dataset) == len(image_names) // clip_size  # fixed clip chunking
 
     # ------------------ test scan folder mode -------------------- #
     opt.io_backend = {"type": "disk"}
     dataset = PairedVideoDataset(opt)
     assert dataset.io_backend_opt["type"] == "disk"  # io backend
-    assert (
-        len(dataset) == len(image_names) - clip_size + 1
-    )  # whether to correctly scan folders
+    assert len(dataset) == len(image_names) // clip_size  # fixed clip chunking
+
+    expected_middle_frames = [image_names[2], image_names[7]]
 
     # test __getitem__
-    for i in range(7):
+    for i, middle_frame in enumerate(expected_middle_frames):
         result = dataset.__getitem__(i)
         # check returned keys
         expected_keys = ["lq", "gt", "lq_path", "gt_path"]
@@ -62,10 +61,10 @@ phase: train
         assert result["lq"].shape == (clip_size, 3, gt_size // scale, gt_size // scale)
         print(i, result["lq_path"], result["gt_path"])
         assert osp.normpath(result["lq_path"]) == osp.normpath(
-            f"datasets/train/video/lr/{image_names[i + clip_size // 2]}.png"
+            f"datasets/train/video/lr/{middle_frame}.png"
         )
         assert osp.normpath(result["gt_path"]) == osp.normpath(
-            f"datasets/train/video/hr/{image_names[i + clip_size // 2]}.png"
+            f"datasets/train/video/hr/{middle_frame}.png"
         )
 
 
@@ -140,3 +139,63 @@ phase: train
 #         result = dataset.__getitem__(i)
 #         assert "lq_path" in result
 #         print(i, result["lq_path"])
+
+
+def test_pairedvideodataset_uses_alphabetical_chunks(tmp_path) -> None:
+    clip_size = 4
+    source_lr = tmp_path / "lr"
+    source_hr = tmp_path / "hr"
+    source_lr.mkdir()
+    source_hr.mkdir()
+
+    renamed_files = [
+        "beta.png",
+        "kappa.png",
+        "alpha.png",
+        "theta.png",
+        "delta.png",
+        "omega.png",
+        "gamma.png",
+        "sigma.png",
+        "tau.png",
+        "zeta.png",
+        "eta.png",
+    ]
+    source_files = [
+        f"datasets/train/video/lr/show1_Frame{frame}.png" for frame in range(200, 211)
+    ]
+
+    for src, renamed in zip(source_files, renamed_files, strict=True):
+        shutil.copy(src, source_lr / renamed)
+        shutil.copy(src.replace("/lr/", "/hr/"), source_hr / renamed)
+
+    opt_str = rf"""
+name: AlphabeticalChunks
+type: PairedVideoDataset
+dataroot_gt: [{source_hr}]
+dataroot_lq: [{source_lr}]
+filename_tmpl: '{{}}'
+io_backend:
+    type: disk
+clip_size: {clip_size}
+scale: 2
+use_hflip: false
+use_rot: false
+
+phase: val
+"""
+    opt = msgspec.yaml.decode(opt_str, type=DatasetOptions, strict=True)
+    dataset = PairedVideoDataset(opt)
+
+    assert len(dataset) == 2
+
+    alphabetical_files = sorted(renamed_files)
+    expected_middle_frames = [
+        alphabetical_files[clip_size // 2],
+        alphabetical_files[clip_size + clip_size // 2],
+    ]
+
+    for i, middle_frame in enumerate(expected_middle_frames):
+        result = dataset[i]
+        assert osp.basename(result["lq_path"]) == middle_frame
+        assert osp.basename(result["gt_path"]) == middle_frame
