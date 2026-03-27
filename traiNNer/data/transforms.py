@@ -20,7 +20,7 @@ VIPS_FORMAT_TO_DTYPE: dict[str, np.dtype] = {
     "double": np.float64,
 }
 
-RANDOM_CROP_MODULO = 4
+RANDOM_CROP_MODULO = 8
 
 
 def get_vips_dtype(img: pyvips.Image) -> np.dtype:
