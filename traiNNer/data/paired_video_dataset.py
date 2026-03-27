@@ -79,11 +79,10 @@ class PairedVideoDataset(BaseDataset):
                     for f in lr_files
                 ]
 
-            n_clips = len(lr_files) // self.clip_size
+            n_clips = len(lr_files) - self.clip_size + 1
             scene_clips = 0
 
-            for clip_idx in range(n_clips):
-                start_idx = clip_idx * self.clip_size
+            for start_idx in range(max(n_clips, 0)):
                 scene_files = lr_files[start_idx : start_idx + self.clip_size]
                 middle_filename = scene_files[self.clip_size // 2]
 

@@ -34,15 +34,15 @@ phase: train
 
     dataset = PairedVideoDataset(opt)
     assert dataset.io_backend_opt["type"] == "disk"  # io backend
-    assert len(dataset) == len(image_names) // clip_size  # fixed clip chunking
+    assert len(dataset) == len(image_names) - clip_size + 1  # sliding windows
 
     # ------------------ test scan folder mode -------------------- #
     opt.io_backend = {"type": "disk"}
     dataset = PairedVideoDataset(opt)
     assert dataset.io_backend_opt["type"] == "disk"  # io backend
-    assert len(dataset) == len(image_names) // clip_size  # fixed clip chunking
+    assert len(dataset) == len(image_names) - clip_size + 1  # sliding windows
 
-    expected_middle_frames = [image_names[2], image_names[7]]
+    expected_middle_frames = image_names[2 : 2 + len(dataset)]
 
     # test __getitem__
     for i, middle_frame in enumerate(expected_middle_frames):
@@ -141,7 +141,7 @@ phase: train
 #         print(i, result["lq_path"])
 
 
-def test_pairedvideodataset_uses_alphabetical_chunks(tmp_path) -> None:
+def test_pairedvideodataset_uses_alphabetical_sliding_windows(tmp_path) -> None:
     clip_size = 4
     source_lr = tmp_path / "lr"
     source_hr = tmp_path / "hr"
@@ -170,7 +170,7 @@ def test_pairedvideodataset_uses_alphabetical_chunks(tmp_path) -> None:
         shutil.copy(src.replace("/lr/", "/hr/"), source_hr / renamed)
 
     opt_str = rf"""
-name: AlphabeticalChunks
+name: AlphabeticalSlidingWindows
 type: PairedVideoDataset
 dataroot_gt: [{source_hr}]
 dataroot_lq: [{source_lr}]
@@ -187,12 +187,11 @@ phase: val
     opt = msgspec.yaml.decode(opt_str, type=DatasetOptions, strict=True)
     dataset = PairedVideoDataset(opt)
 
-    assert len(dataset) == 2
+    assert len(dataset) == len(renamed_files) - clip_size + 1
 
     alphabetical_files = sorted(renamed_files)
-    expected_middle_frames = [
-        alphabetical_files[clip_size // 2],
-        alphabetical_files[clip_size + clip_size // 2],
+    expected_middle_frames = alphabetical_files[
+        clip_size // 2 : clip_size // 2 + len(dataset)
     ]
 
     for i, middle_frame in enumerate(expected_middle_frames):
