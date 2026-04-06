@@ -207,6 +207,7 @@ class PerceptualFP16Loss(nn.Module):
             ).unsqueeze(2).unsqueeze(3)
             self.register_buffer(f"rand_{i}", rand)
 
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")  # pyright: ignore[reportPrivateImportUsage]
     def forward_once_fd(self, x: Tensor, y: Tensor, idx: int) -> Tensor:
         """
         x, y: input image tensors with the shape of (N, C, H, W)
@@ -227,6 +228,7 @@ class PerceptualFP16Loss(nn.Module):
         s = torch.abs(projx - projy).mean([1, 2])
         return s
 
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")  # pyright: ignore[reportPrivateImportUsage]
     def fd(self, x_vgg: Tensor, y_vgg: Tensor, i: int) -> Tensor:
         # Transform to Fourier Space
         fft_x = torch.fft.fftn(x_vgg, dim=(-2, -1))
