@@ -504,16 +504,35 @@ class SRModel(BaseModel):
                     if loss.loss_weight < 0:
                         if lq_target is None:
                             with torch.inference_mode():
-                                lq_target = torch.clamp(
-                                    F.interpolate(
-                                        self.lq,
+                                if self.opt.scale == 1:
+                                    lq_target = torch.clamp(self.lq, 0, 1)
+                                elif self.lq.dim() == 4:
+                                    lq_target = torch.clamp(
+                                        F.interpolate(
+                                            self.lq,
+                                            scale_factor=self.opt.scale,
+                                            mode="bicubic",
+                                            antialias=True,
+                                        ),
+                                        0,
+                                        1,
+                                    )
+                                elif self.lq.dim() == 5:
+                                    b, t, c, h, w = self.lq.shape
+                                    lq_4d = self.lq.reshape(b * t, c, h, w)
+                                    lq_up_4d = F.interpolate(
+                                        lq_4d,
                                         scale_factor=self.opt.scale,
                                         mode="bicubic",
                                         antialias=True,
-                                    ),
-                                    0,
-                                    1,
-                                )
+                                    )
+                                    lq_target = torch.clamp(
+                                        lq_up_4d.reshape(b, t, c, lq_up_4d.shape[-2], lq_up_4d.shape[-1]),
+                                        0,
+                                        1,
+                                    )
+                                else:
+                                    raise ValueError(f"Unsupported lq dim for negative loss path: {self.lq.dim()}")
                         target = lq_target
 
                     if label == "l_g_gan":
