@@ -154,6 +154,13 @@ class FFTLoss(nn.Module):
 
 
 @LOSS_REGISTRY.register()
+class FFTFP16Loss(FFTLoss):
+    @torch.amp.custom_fwd(cast_inputs=torch.float32, device_type="cuda")  # pyright: ignore[reportPrivateImportUsage] # https://github.com/pytorch/pytorch/issues/131765
+    def forward(self, pred: Tensor, target: Tensor) -> Tensor:
+        return super().forward(pred, target)
+
+
+@LOSS_REGISTRY.register()
 class PSNRLoss(nn.Module):
     def __init__(
         self, loss_weight: float, reduction: str = "mean", to_y: bool = False
